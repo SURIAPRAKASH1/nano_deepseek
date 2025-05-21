@@ -1,0 +1,204 @@
+import importlib.util
+import torch
+import torch.optim as optim
+
+from models.config.default import DeepSeekConfig
+from models.deepseek_v3.transformer import DeepSeekTransformer
+
+from collections import defaultdict
+from typing import Literal
+import sys
+import importlib
+import time 
+
+
+# what's the current device
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print('current device -->', device)
+
+# tokenizer
+print("importing tokenizer from hugging_face...")
+
+if importlib.util.find_spec('transformers'):
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/DeepSeek-V3")
+    vocab_size = tokenizer.vocab_size
+    print('vocab_size', vocab_size)
+
+else:
+    print('We need DeepSeek-v3 tokenizer from transformers lib so install') 
+    sys.exit(1)
+    
+
+print("Tokenizing the Dataset")
+# lyrics file 
+text = open("All_eminem_songs.txt", 'r').read()
+tokens = tokenizer.encode(text)
+print(f'{len(text)} words get tokenized to {len(tokens)} tokens')
+
+print("Splitting train and dev dataset")
+# splitting data into train and dev set's
+n = int(len(tokens) * 0.9)
+train_data = tokens[:n]      # 90%
+dev_data = tokens[n:]        # 10%
+print(f"train data {len(train_data)} tokens\ndev data {len(dev_data)} tokens")
+
+# randomly get sample of batch of tokens
+def get_batch(split, device):
+  
+  data = train_data if split == 'train' else dev_data
+  xi = torch.randint(len(data) - DeepSeekConfig.block_size, (DeepSeekConfig.batch_size,))
+  x = torch.tensor([data[i: i + DeepSeekConfig.block_size] for i in xi])
+  y = torch.tensor([data[i + 1: i + DeepSeekConfig.block_size + 1 ] for i in xi])
+
+  # for efficient gpu performence
+  if device != 'cpu':
+    x = x.pin_memory()              # by pinning make sure tensor ain't non pageble (only live in ram)
+    y = y.pin_memory()
+    x = x.to(device, non_blocking = True)
+    y = y.to(device, non_blocking = True)
+  else:
+    x = x.to(device)
+    y = y.to(device)
+
+  return x, y
+
+X, Y = get_batch('train', device)
+# How transfomer see tokens and learn from it
+# for single sequence . here i cut the seq for visualization
+t = DeepSeekConfig.block_size // 10  if DeepSeekConfig.block_size // 10  <= 6 else 6
+print("-----------------------------------HOW TRANSFORMER SEE TOKENS AND LEARN FROM IT---------------------------------")
+for i in range(t):
+  t_input = X[0, : i+1].tolist()
+  t_pred = Y[0, i].tolist()
+  print(f"Input: {t_input}, Have to predict: {t_pred}")
+  print(f"Input: {tokenizer.decode(t_input)}, Have to predict: {tokenizer.decode(t_pred)}")
+  print(' ') 
+
+
+
+# model config. if we wanna re-write when running this script
+n_layers: int = 5         # how many layers in model
+n_embd: int = 192         # token embedding dim
+block_size: int = 32      # sequence lenght
+n_heads: int = 4          # Number of heads in attention
+n_dense_layers: int = 1   # if we wanna use dense layer instead of MOE
+score_func: Literal['sigmoid', 'softmax'] = 'sigmoid'      # affinity score funciton
+inter_dim: int = 768         # hidden state dimentionaly for MLP 
+experts_dim: int = 192       # hidden state dimentionaly for MOE
+bias: bool = False 
+
+model_args = dict(n_layers = n_layers, n_embd = n_embd, block_size = block_size, n_heads = n_heads, 
+                    score_func = score_func, inter_dim = inter_dim, experts_dim = experts_dim, bias = bias)
+
+
+# Hyper parameters for training
+steps: int = 5000           # How many steps we want to trian our model
+eval_iters: int = 200       # When estimating a loss How many batches we should be consider
+eval_step: int = 500        # evaluate loss once in a while
+lr: float = 1e-4             # learning rate
+min_lr: float = 1e-5          
+beta1: float = 0.9
+beta2: float = 0.95
+weight_decay: float = 1e-1   
+warmup_iters: int = 200    # will increase lr then start to decay from here 
+
+@torch.no_grad()
+def estimate_loss(model):
+  model.eval()              # model in eval mode bro .....
+
+  out = {}
+  for split in ['train', 'dev']:
+    losses = torch.zeros(eval_iters)
+
+    for i in range(eval_iters):
+      X, Y = get_batch(split, device = device)
+      _, loss = model(X, Y)
+      losses[i] = loss
+
+    # take average over batches
+    out[split] = losses.mean()
+
+  model.train()
+  return out
+
+import math
+def get_lr(it):
+  # so we gradually increasing learning rate
+  if it < warmup_iters:
+    return  lr * (it + 1) / (warmup_iters + 1)
+    
+  # starting to decaying the learning rate using cosine
+  else:
+    decay_ratio = (it - warmup_iters)/ (steps - warmup_iters)
+    assert 0 <= decay_ratio <=1
+    coeff = 0.5 * ( 1.0 + math.cos( math.pi * decay_ratio))
+    return  min_lr + coeff * (lr - min_lr)    # we make sure learning rate shouldn't 0 (but we wanna decrease)
+
+print("initiating a model ...")
+dsconfig = DeepSeekConfig(**model_args)
+model = DeepSeekTransformer(dsconfig).to(device)
+
+# AdamW (decoubled weight decay)
+optimizer = optim.AdamW(model.parameters(), lr = lr, betas= (beta1, beta2), weight_decay= weight_decay)
+scaler = torch.amp.GradScaler(device = device)
+
+# loss stacks
+gb_lossi = defaultdict(list)
+
+print("start training a model ...")
+# Optimization loop
+
+start = time.time()
+for step in range(steps):
+  # get batch of sample data from training dataset
+  X, Y = get_batch('train', device)
+  optimizer.zero_grad()
+
+  # 1. FORWARD PASS AND COMPUTE LOSS
+
+  # enable auto mixed percision. it's converts dtype to F16/BF16 whenever possible.
+  with torch.amp.autocast(device_type= device, dtype= torch.bfloat16):
+    _, loss = model(X, Y)
+
+  # 2. BAKWARD PASS
+  # scale the loss then do back-ward pass
+  # cause computing loss in F16/BF16 dtype (if we) we get very small loss. if compute grad for that we will get vanishing gradients
+  # so what's the solution scale the loss then compute gradients, when updating params scale down else explode
+  scaler.scale(loss).backward()
+
+  # grad clip
+  scaler.unscale_(optimizer) 
+  torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm = 1.0)
+
+  # 3.UPDATE PARAMETERS 
+  scaler.step(optimizer)
+  scaler.update()
+  optimizer.defaults['lr'] = get_lr(step) 
+
+  # estimate loss once in a while
+  if step % eval_step == 0 or step == steps - 1:
+    losses = estimate_loss(model)
+
+    gb_lossi['train'].append(losses['train'].item())
+    gb_lossi['dev'].append(losses['dev'].item())
+
+    print(f"{step}:{steps}, train_loss: {losses['train'].item()}, dev_loss: {losses['dev'].item()} ")
+
+print("training is complete ....")
+end = time.time()
+print("Training time %.2f " % ((end - start)/60), "Minutes")
+
+# SAMPLING 
+# encode string to get tokens
+print("sampling from model ...")
+prompt = """no more games, i'am change what you call rage"""
+encoded_tokens =  torch.tensor([tokenizer.encode(prompt)], device= device) # (B, T) 
+
+# sampling from model
+model.eval()
+generated_tokens =  model.generate(encoded_tokens, max_tokens= 100, temprature= 0.8, top_k= 10000)
+
+# decode tokens to get string format 
+result = tokenizer.decode(generated_tokens[0].tolist(), skip_special_tokens= True)
+print(result)
