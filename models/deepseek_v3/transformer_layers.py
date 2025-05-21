@@ -3,8 +3,8 @@ import torch.nn.functional as F
 import torch.nn as nn 
 
 from models.config.default import DeepSeekConfig
-from rope import apply_rope
-from loss import complementary_seqwise_auxi_loss
+from models.deepseek_v3.rope import apply_rope
+from models.deepseek_v3.loss import complementary_seqwise_auxi_loss
 
 from typing import Optional
 
