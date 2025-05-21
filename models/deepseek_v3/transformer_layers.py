@@ -352,9 +352,9 @@ class DeepSeekMOE(nn.Module):
         self.w2 = nn.Parameter(torch.zeros(self.num_experts, self.moe_inter_dim, self.dim))
         self.w3 = nn.Parameter(torch.zeros(self.num_experts, self.dim, self.moe_inter_dim))
 
-        nn.init.normal_(self.w1, mean = 0.0, std = 0.02)
-        nn.init.normal_(self.w2, mean = 0.0, std = 0.02)
-        nn.init.normal_(self.w3, mean = 0.0, std = 0.02)
+        nn.init.normal_(self.w1, mean = 0.0, std = 0.006)
+        nn.init.normal_(self.w2, mean = 0.0, std = 0.006)
+        nn.init.normal_(self.w3, mean = 0.0, std = 0.006)
 
         # act
         self.act = nn.SiLU()
