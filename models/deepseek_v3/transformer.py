@@ -3,8 +3,8 @@ import torch.nn.functional as F
 import torch.nn as nn
 
 from models.config.default import DeepSeekConfig
-from transformer_layers import DeepSeekBlock, DeepSeekRMSNorm
-from rope import precompute_freq_cis
+from models.deepseek_v3.transformer_layers import DeepSeekBlock, DeepSeekRMSNorm
+from models.deepseek_v3.rope import precompute_freq_cis
 
 from typing import Optional
 
