@@ -211,7 +211,7 @@ encoded_tokens =  torch.tensor([tokenizer.encode(prompt)], device= device) # (B,
 
 # sampling from model
 model.eval()
-generated_tokens =  model.generate(encoded_tokens, max_tokens= 100, temprature= 0.8, top_k= 10000)
+generated_tokens =  model.generate(encoded_tokens, max_tokens= 100, temperature= 0.8, top_k= 10000)
 
 # decode tokens to get string format 
 result = tokenizer.decode(generated_tokens[0].tolist(), skip_special_tokens= True)
