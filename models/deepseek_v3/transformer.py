@@ -132,7 +132,7 @@ class DeepSeekTransformer(nn.Module):
 
         return logits, loss
 
-    def generate(self, idx, max_tokens, temprature = 0.8, top_k: Optional[int] = None)-> torch.Tensor:
+    def generate(self, idx, max_tokens, temperature = 0.8, top_k: Optional[int] = None)-> torch.Tensor:
 
         """
         From given idx model predicting next tokens in cascual way until max_tokens limit
