@@ -15,15 +15,19 @@ import time
 # what's the current device
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print('current device -->', device)
+print(" ")
 
 # tokenizer
 print("importing tokenizer from hugging_face...")
+print(" ")
+
 
 if importlib.util.find_spec('transformers'):
     from transformers import AutoTokenizer
     tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/DeepSeek-V3")
     vocab_size = tokenizer.vocab_size
     print('vocab_size', vocab_size)
+    print(" ")
 
 else:
     print('We need DeepSeek-v3 tokenizer from transformers lib so install') 
@@ -31,25 +35,45 @@ else:
     
 
 print("Tokenizing the Dataset")
+print(" ")
 # lyrics file 
 text = open("All_eminem_songs.txt", 'r').read()
 tokens = tokenizer.encode(text)
 print(f'{len(text)} words get tokenized to {len(tokens)} tokens')
+print(" ")
 
 print("Splitting train and dev dataset")
+print(" ")
 # splitting data into train and dev set's
 n = int(len(tokens) * 0.9)
 train_data = tokens[:n]      # 90%
 dev_data = tokens[n:]        # 10%
 print(f"train data {len(train_data)} tokens\ndev data {len(dev_data)} tokens")
+print(" ")
+
+# this what i can came up with to update model configuration from cml args
+exec(open("configurator.py", 'r').read())
+
+model_args = DeepSeekConfig()
+
+cmla_configs = globals()["cml_updated_args"]
+if len(cmla_configs) > 0:
+    verbose_re_configs = {k: v for k, v in cmla_configs.items() if k != 'verbose'}
+    if len(verbose_re_configs) > 0:
+        model_args = DeepSeekConfig(**verbose_re_configs)
+        if cmla_configs['verbose']:
+          print("Updated model Arguments")
+          print(model_args)
+          print(" ")
+
 
 # randomly get sample of batch of tokens
 def get_batch(split, device):
   
   data = train_data if split == 'train' else dev_data
-  xi = torch.randint(len(data) - DeepSeekConfig.block_size, (DeepSeekConfig.batch_size,))
-  x = torch.tensor([data[i: i + DeepSeekConfig.block_size] for i in xi])
-  y = torch.tensor([data[i + 1: i + DeepSeekConfig.block_size + 1 ] for i in xi])
+  xi = torch.randint(len(data) - model_args.block_size, (model_args.batch_size,))
+  x = torch.tensor([data[i: i + model_args.block_size] for i in xi])
+  y = torch.tensor([data[i + 1: i + model_args.block_size + 1 ] for i in xi])
 
   # for efficient gpu performence
   if device != 'cpu':
@@ -66,7 +90,7 @@ def get_batch(split, device):
 X, Y = get_batch('train', device)
 # How transfomer see tokens and learn from it
 # for single sequence . here i cut the seq for visualization
-t = DeepSeekConfig.block_size // 10  if DeepSeekConfig.block_size // 10  <= 6 else 6
+t = model_args.block_size // 5  if model_args.block_size // 10  <= 5 else 5
 print("-----------------------------------HOW TRANSFORMER SEE TOKENS AND LEARN FROM IT---------------------------------")
 for i in range(t):
   t_input = X[0, : i+1].tolist()
@@ -74,22 +98,6 @@ for i in range(t):
   print(f"Input: {t_input}, Have to predict: {t_pred}")
   print(f"Input: {tokenizer.decode(t_input)}, Have to predict: {tokenizer.decode(t_pred)}")
   print(' ') 
-
-
-
-# model config. if we wanna re-write when running this script
-n_layers: int = 5         # how many layers in model
-n_embd: int = 192         # token embedding dim
-block_size: int = 32      # sequence lenght
-n_heads: int = 4          # Number of heads in attention
-n_dense_layers: int = 1   # if we wanna use dense layer instead of MOE
-score_func: Literal['sigmoid', 'softmax'] = 'sigmoid'      # affinity score funciton
-inter_dim: int = 768         # hidden state dimentionaly for MLP 
-experts_dim: int = 192       # hidden state dimentionaly for MOE
-bias: bool = False 
-
-model_args = dict(n_layers = n_layers, n_embd = n_embd, block_size = block_size, n_heads = n_heads, 
-                    score_func = score_func, inter_dim = inter_dim, experts_dim = experts_dim, bias = bias)
 
 
 # Hyper parameters for training
@@ -136,8 +144,8 @@ def get_lr(it):
     return  min_lr + coeff * (lr - min_lr)    # we make sure learning rate shouldn't 0 (but we wanna decrease)
 
 print("initiating a model ...")
-dsconfig = DeepSeekConfig(**model_args)
-model = DeepSeekTransformer(dsconfig).to(device)
+print(" ")
+model = DeepSeekTransformer(model_args).to(device)
 
 # AdamW (decoubled weight decay)
 optimizer = optim.AdamW(model.parameters(), lr = lr, betas= (beta1, beta2), weight_decay= weight_decay)
@@ -147,6 +155,7 @@ scaler = torch.amp.GradScaler(device = device)
 gb_lossi = defaultdict(list)
 
 print("start training a model ...")
+print(" ")
 # Optimization loop
 
 start = time.time()
@@ -185,13 +194,18 @@ for step in range(steps):
 
     print(f"{step}:{steps}, train_loss: {losses['train'].item()}, dev_loss: {losses['dev'].item()} ")
 
+print(" ")
 print("training is complete ....")
+print(" ")
 end = time.time()
 print("Training time %.2f " % ((end - start)/60), "Minutes")
+print(" ")
 
 # SAMPLING 
 # encode string to get tokens
 print("sampling from model ...")
+print(" ")
+
 prompt = """no more games, i'am change what you call rage"""
 encoded_tokens =  torch.tensor([tokenizer.encode(prompt)], device= device) # (B, T) 
 
