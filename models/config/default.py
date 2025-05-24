@@ -53,7 +53,13 @@ class DeepSeekConfig:
 
     route_scale (float): Routing Scale factor
 
-    # rope
+    # MTP
+
+    mtp_depth (int): How many Multitoken Prediction Module do we want?
+
+    mtp_lambda (float): Scaling factor for mtp loss
+
+    # RoPE
     omega (int): Predefined constant for computing complex exponential values
 
     # others
@@ -62,6 +68,8 @@ class DeepSeekConfig:
     dropout (float): Regularization for randomly deactivating activation
 
     max_seq_len (int): Maximum sequence lenght that model can handle
+
+    weight_tying (bool): Input Matrix (Embeddings) and Ouput Matrix (Head) wanna share weights. Reduces parameters counts
     
     """
 
@@ -91,9 +99,15 @@ class DeepSeekConfig:
     score_func: Literal['sigmoid', 'softmax'] = 'sigmoid'    
     route_scale: float = 1.0
 
+    # MTP
+    mtp_depth: int = 1
+    mtp_lambda: float = 3e-1
+
     # rope
     omega: int = 10000.0
 
+    # others
     bias: bool = False
     dropout: float = 0.1
     max_seq_len: int = block_size
+    weight_tying: bool = False
