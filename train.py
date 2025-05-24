@@ -173,7 +173,7 @@ for step in range(steps):
 
   # enable auto mixed percision. it's converts dtype to F16/BF16 whenever possible.
   with torch.amp.autocast(device_type= device, dtype= torch.bfloat16):
-    _, loss = model(X, Y)
+    loss, _ = model(X, Y)
 
   # 2. BAKWARD PASS
   # scale the loss then do back-ward pass
