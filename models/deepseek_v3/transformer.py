@@ -219,7 +219,7 @@ class DeepSeekTransformer(nn.Module):
                 idx_count = idx if idx.size(1) <= self.block_size else idx[:,- self.block_size:]
 
                 # get the logits from model
-                logits, _  = self(idx_count)
+                logits = self(idx_count)
                 # then scale the logits by temperature. by doing this way we can control how next token going to draw
                 logits = logits[:, -1, :] / temperature
                 # then apply softmax to get prob distripution for our vocab
