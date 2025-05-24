@@ -6,10 +6,10 @@ from models.config.default import DeepSeekConfig
 from models.deepseek_v3.transformer import DeepSeekTransformer
 
 from collections import defaultdict
-from typing import Literal
 import sys
 import importlib
 import time 
+from dataclasses import dataclass, field
 
 
 # what's the current device
@@ -152,7 +152,12 @@ optimizer = optim.AdamW(model.parameters(), lr = lr, betas= (beta1, beta2), weig
 scaler = torch.amp.GradScaler(device = device)
 
 # loss stacks
-gb_lossi = defaultdict(list)
+@dataclass
+class Loss:
+  main_loss: list = field(default_factory= list)
+  mtp_loss: list = field(default_factory= list)
+
+gb_lossi = defaultdict(Loss)  
 
 print("start training a model ...")
 print(" ")
@@ -186,13 +191,18 @@ for step in range(steps):
   optimizer.defaults['lr'] = get_lr(step) 
 
   # estimate loss once in a while
-  if step % eval_step == 0 or step == steps - 1:
-    losses = estimate_loss(model)
+  if step % eval_step == 0 or step  == steps - 1:
+    out = estimate_loss(model)
 
-    gb_lossi['train'].append(losses['train'].item())
-    gb_lossi['dev'].append(losses['dev'].item())
+    # for plotting loss curve
+    gb_lossi['train'].main_loss.append(out['train'][0].item())
+    gb_lossi['train'].mtp_loss.append(out['train'][1].item())
 
-    print(f"{step}:{steps}, train_loss: {losses['train'].item()}, dev_loss: {losses['dev'].item()} ")
+    gb_lossi['dev'].main_loss.append(out['dev'][0].item())
+    gb_lossi['dev'].mtp_loss.append(out['dev'][1].item())
+
+
+    print(f"step {step}/{steps}: train: main_loss {out['train'][0].item()} mtp_loss {out['train'][1].item()}, dev: main_loss {out['dev'][0].item()} mtp_loss {out['dev'][1].item()}")
 
 print(" ")
 print("training is complete ....")
