@@ -108,13 +108,13 @@ class DeepSeekTransformer(nn.Module):
 
         """
 
-        if not self.training and target_ids is None or self.depth == 0:
+        if not self.training and target_ids is None or self.mtp_depth == 0:
             # when sampling or don't wanna use MTP module at all
             main_tokens_ids = input_ids
             seq_len = main_tokens_ids.size(-1)
         else:
             # shrink the tokens sequence length in main model
-            main_tokens_ids = input_ids[:, :-self.depth]   # (B, T - depth)
+            main_tokens_ids = input_ids[:, :-self.mtp_depth]   # (B, T - depth)
             seq_len = main_tokens_ids.size(-1)
 
         h = self.embed(main_tokens_ids)
@@ -135,7 +135,7 @@ class DeepSeekTransformer(nn.Module):
             h_prev = h_main
             mtp_loss = 0.0
 
-            for d in range(self.depth):
+            for d in range(self.mtp_depth):
                 # move the input_ids, target_ids right side with d size
                 indices = slice(d + 1, seq_len + d + 1)
 
@@ -162,7 +162,7 @@ class DeepSeekTransformer(nn.Module):
                     mtp_target_ids.reshape(-1)         # don't know why view ain't good with slice
                 )
 
-                mtp_loss += mtp_l / self.depth
+                mtp_loss += mtp_l / self.mtp_depth
 
             # main model logits
             main_logits = self.head(h_main)
