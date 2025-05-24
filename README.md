@@ -15,7 +15,7 @@ _This repo contains nano version of DeepSeek LLM's that are implemented from sca
   
   *5. Rotary Positional Embedding (RoPE in a decoupled way)*
 
-  *Still there is so much left. Here is the Link to the paper. Actually it 53 page BOOK 🙄 but still lot of the MOE stuffs are in DeepseekMoE paper. They talked lot about traning and MiX datatype traning (eg:int8, bf16, f16)*
+  *Still there is so much left. Here is the Link to the paper. Actually it 53 page BOOK 🙄 but still lot of the MOE stuffs are in DeepseekMoE paper. They talked lot about traning and MiX datatype traning (eg:the famous FP8, BF16, F16)*
   
   **V3**: *https://arxiv.org/pdf/2412.19437*
     
