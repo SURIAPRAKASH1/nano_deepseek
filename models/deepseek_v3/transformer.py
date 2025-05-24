@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 
 from models.config.default import DeepSeekConfig
-from models.deepseek_v3.transformer_layers import DeepSeekBlock, DeepSeekRMSNorm
+from models.deepseek_v3.transformer_layers import DeepSeekBlock, DeepSeekRMSNorm, DeepSeekMTP
 from models.deepseek_v3.rope import precompute_freq_cis
 
 from typing import Optional
@@ -30,16 +30,25 @@ class DeepSeekTransformer(nn.Module):
         self.vocab_size = args.vocab_size
         self.block_size = args.block_size
         self.n_dense_layers = args.n_dense_layers
+        self.mtp_depth = args.mtp_depth 
+        self.mtp_lambda = args.mtp_lambda
+        self.weight_tying = args.weight_tying
 
         self.embed = nn.Embedding(args.vocab_size, args.n_embd)
+
+        # main model
         self.layers = nn.ModuleList([
             DeepSeekBlock(i, args) for i in range(args.n_layers)
         ])
+        # MTP module
+        self.mtp = nn.ModuleList([DeepSeekMTP(i, args) for i in range(args.mtp_depth)])
+
         self.norm = DeepSeekRMSNorm(args.n_embd)
         self.head = nn.Linear(args.n_embd, args.vocab_size, args.bias)
 
-        # weight tying
-        self.embed.weight = self.head.weight
+        # weight tying. deepseek_v3 didn't use
+        if self.weight_tying:
+            self.embed.weight = self.head.weight
 
         # weight initialization
         self.apply(self._init_weight)
@@ -98,10 +107,18 @@ class DeepSeekTransformer(nn.Module):
             loss (torch.Tensor): Loss will be computed using cross_entropy . if only target is given
 
         """
-        seq_len = input_ids.size(1)
 
-        h = self.embed(input_ids)            # token embedding
-        freqs = self.freqs[:seq_len]         # crop freqs
+        if not self.training and target_ids is None or self.depth == 0:
+            # when sampling or don't wanna use MTP module at all
+            main_tokens_ids = input_ids
+            seq_len = main_tokens_ids.size(-1)
+        else:
+            # shrink the tokens sequence length in main model
+            main_tokens_ids = input_ids[:, :-self.depth]   # (B, T - depth)
+            seq_len = main_tokens_ids.size(-1)
+
+        h = self.embed(main_tokens_ids)
+        freqs = self.freqs[ :seq_len]
         mask = None
 
         if seq_len > 1:
@@ -111,26 +128,67 @@ class DeepSeekTransformer(nn.Module):
             h = layer(h, freqs, mask)
 
         # norm before logits
-        h = self.norm(h)
+        h_main = self.norm(h)
 
         if target_ids is not None:
-            logits = self.head(h)
+
+            h_prev = h_main
+            mtp_loss = 0.0
+
+            for d in range(self.depth):
+                # move the input_ids, target_ids right side with d size
+                indices = slice(d + 1, seq_len + d + 1)
+
+                mtp_freqs = self.freqs[indices]
+
+                mtp_token_ids = input_ids[:, indices]
+                mtp_target_ids = target_ids[:, indices]
+
+                # embedding shared with main model
+                mtp_emb = self.embed(mtp_token_ids)
+
+                assert h_prev.shape == mtp_emb.shape,f"previous module with shape {h_prev.shape}, current module embedding with shape {mtp_emb.shape}"
+
+                # MTP modules
+                h_current = self.mtp[d](h_prev, mtp_emb, mtp_freqs, mask)
+
+                # output head shared with main model
+                mtp_logits = self.head(h_current)
+                h_prev = h_current
+
+                # compute loss
+                mtp_l = F.cross_entropy(
+                    mtp_logits.view(-1, self.vocab_size),
+                    mtp_target_ids.reshape(-1)         # don't know why view ain't good with slice
+                )
+
+                mtp_loss += mtp_l / self.depth
+
+            # main model logits
+            main_logits = self.head(h_main)
+
             # main loss
-            celoss = F.cross_entropy(logits.view(-1, self.vocab_size), target_ids.view(-1))
+            main_loss = F.cross_entropy(main_logits.view(-1, self.vocab_size), target_ids[:, :seq_len].reshape(-1))
+
+            # added mtp loss to main loss
+            if mtp_loss:
+                main_loss += self.mtp_lambda * mtp_loss
+
             # complementry seq_wize auxiliary loss
             total_auxi_loss = 0.0
             if self.training:
                 for i in range(self.n_dense_layers, len(self.layers)):
                     total_auxi_loss +=  self.layers[i].ffn.gate.auxi_loss
 
-            loss = celoss + total_auxi_loss
+                main_loss += total_auxi_loss
 
         else:
-            # finall logits modification
-            logits = self.head(h[:, [-1], :])
-            loss = None
+            # when predicting it's auto regressive manner.so have to predict next token in seq 
+            # by only taking logits of last token. but transfomer understands what's the seq about
+            logits = self.head(h_main[:, [-1], :])
+            return logits
 
-        return logits, loss
+        return main_loss, mtp_loss
 
     def generate(self, idx, max_tokens, temperature = 0.8, top_k: Optional[int] = None)-> torch.Tensor:
 
@@ -168,7 +226,7 @@ class DeepSeekTransformer(nn.Module):
                 # optionally crop the logits to only the top k options
                 if top_k is not None:
                     v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                    logits[logits < v[:, [-1]]] = -float('Inf')
+                    logits[logits < v[:, [-1]]] = -float('inf')
                 probs = torch.softmax(logits, dim = -1)
                 # we drawing next token in random sampling way so token with lowest will get a chance
                 next_idx = torch.multinomial(probs, num_samples=1)
