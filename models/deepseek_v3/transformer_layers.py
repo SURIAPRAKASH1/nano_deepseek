@@ -467,3 +467,64 @@ class DeepSeekBlock(nn.Module):
         x  = x + self.ffn(self.ffn_norm(x))
         return x
 
+
+
+class DeepSeekMTP(nn.Module):
+  """
+  Multi-Token Prediction Module.
+  Purpose of this MTP is to make main model able to pre-plan it's representation to predict future tokens.
+
+  Attributes:
+
+    dim (int): Input tensor Dimentionality
+    proj (nn.Linear): Linear layer for projecting
+    block (nn.Module): Single Transformer block
+    rep_norm (nn.Module): Normalization layer for act representation from previous module
+    emb_norm (nn.Module): Normalization layer for current module embeddings
+
+  Returns:
+
+    torch.Tensor : Output after feeded to transformer block. shape (batch_size, seq_len, embedding_dim)
+
+  """
+
+  def __init__(self, layer_id: int, args: DeepSeekConfig):
+    super().__init__()
+
+    """
+    Args:
+
+      layer_id (int): Current transformer layer index
+      args (DeepSeekConfig): Dataclass of All configuration for model
+
+    """
+
+    self.dim = args.n_embd
+    self.proj = nn.Linear(2 * self.dim, self.dim, args.bias)
+    self.block = DeepSeekBlock(layer_id, args)
+
+    # normalizers
+    self.rep_norm = DeepSeekRMSNorm(self.dim)
+    self.emb_norm = DeepSeekRMSNorm(self.dim)
+
+  def forward(self,
+              h_prev: torch.Tensor,
+              current_Memb: torch.Tensor,
+              freqs: torch.Tensor,
+              mask: Optional[torch.Tensor])-> torch.Tensor:
+    """
+    Args:
+
+      h_prev (torch.Tensor): Previous Module transfomers block or blocks activation representation
+      current_embd (torch.Tensor): Current Module token Embeddings
+      freqs (torch.Tensor): Precomputed complex Exponential values for rope
+      mask (torch.Tensor): Optional Casual Mask for attention
+
+    """
+    x = torch.cat([
+        self.rep_norm(h_prev),
+        self.emb_norm(current_Memb)
+    ], dim = -1)
+    x = self.proj(x)
+    out =  self.block(x, freqs, mask)
+    return out
