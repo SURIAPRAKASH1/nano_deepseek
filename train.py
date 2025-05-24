@@ -104,8 +104,8 @@ for i in range(t):
 steps: int = 5000           # How many steps we want to trian our model
 eval_iters: int = 200       # When estimating a loss How many batches we should be consider
 eval_step: int = 500        # evaluate loss once in a while
-lr: float = 1e-4             # learning rate
-min_lr: float = 1e-5          
+lr: float = 2.2 * 10 **-4             # learning rate
+min_lr: float = 2.2 * 10 **-5          
 beta1: float = 0.9
 beta2: float = 0.95
 weight_decay: float = 1e-1   
@@ -113,19 +113,20 @@ warmup_iters: int = 200    # will increase lr then start to decay from here
 
 @torch.no_grad()
 def estimate_loss(model):
-  model.eval()              # model in eval mode bro .....
+  model.eval()          # model eval mode ....
 
   out = {}
   for split in ['train', 'dev']:
-    losses = torch.zeros(eval_iters)
-
+    losses = torch.zeros(2, eval_iters)
     for i in range(eval_iters):
-      X, Y = get_batch(split, device = device)
-      _, loss = model(X, Y)
-      losses[i] = loss
+      x, y = get_batch(split, device)
+      main_loss, mtp_loss = model(x, y)
+      losses[0][i] = main_loss.item()
+      losses[1][i] = mtp_loss.item()
 
-    # take average over batches
-    out[split] = losses.mean()
+    # take means over batches
+    averge_loss = losses.mean(dim = -1)
+    out[split] = averge_loss
 
   model.train()
   return out
@@ -173,7 +174,7 @@ for step in range(steps):
 
   # enable auto mixed percision. it's converts dtype to F16/BF16 whenever possible.
   with torch.amp.autocast(device_type= device, dtype= torch.bfloat16):
-    _, loss = model(X, Y)
+    loss, _ = model(X, Y)
 
   # 2. BAKWARD PASS
   # scale the loss then do back-ward pass
@@ -204,16 +205,17 @@ for step in range(steps):
 
     print(f"step {step}/{steps}: train: main_loss {out['train'][0].item()} mtp_loss {out['train'][1].item()}, dev: main_loss {out['dev'][0].item()} mtp_loss {out['dev'][1].item()}")
 
-print(" ")
-print("training is complete ....")
-print(" ")
 end = time.time()
 print("Training time %.2f " % ((end - start)/60), "Minutes")
 print(" ")
+print(" ")
+print("Training is complete ....")
+print(" ")
+
 
 # SAMPLING 
 # encode string to get tokens
-print("sampling from model ...")
+print("Sampling from model ...")
 print(" ")
 
 prompt = """no more games, i'am change what you call rage"""
@@ -221,7 +223,7 @@ encoded_tokens =  torch.tensor([tokenizer.encode(prompt)], device= device) # (B,
 
 # sampling from model
 model.eval()
-generated_tokens =  model.generate(encoded_tokens, max_tokens= 100, temperature= 0.8, top_k= 10000)
+generated_tokens =  model.generate(encoded_tokens, max_tokens= 200, temperature= 0.7)
 
 # decode tokens to get string format 
 result = tokenizer.decode(generated_tokens[0].tolist(), skip_special_tokens= True)
