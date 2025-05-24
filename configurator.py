@@ -15,6 +15,7 @@ parser.add_argument("--score_func", type = str, help= "Score fucnction used to g
 parser.add_argument("--inter_dim", type= int, help= "Hidden state dim for MLP") 
 parser.add_argument("--experts_dim", type= int, help= "Hidden state dim for MOE") 
 parser.add_argument("--n_dense_layers", type= int, help= "Number of dense layer in a model")
+parser.add_argument("-w","--weight_tying", action= argparse.BooleanOptionalAction, help = "Wanna weight tying input and ouput matrix")
 parser.add_argument("-b", "--bias", action= argparse.BooleanOptionalAction, help= "Want to include bias term")
 
 
